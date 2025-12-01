@@ -1,0 +1,7 @@
+{
+  "name": "LoveGrow: AI Relationship Coach",
+  "description": "LoveGrow is a pioneering AI-powered mobile game meticulously designed to foster deeper connections between couples and empower singles on their journey toward meaningful relationships.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
