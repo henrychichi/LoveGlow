@@ -1,25 +1,9 @@
-
-
 import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
 import CreateProfile from './components/CreateProfile';
-import { logout, onAuthChange } from './services/firebaseService';
+import { onAuthChange, getUserData, saveUserData, logout } from './services/firebaseService';
 import { UserData, RelationshipStatus, SingleProfile, CoupleProfile } from './types';
-
-// Mock function to get user data from a "database" (localStorage)
-const getMockUserData = (uid: string): UserData | null => {
-  const storedData = localStorage.getItem(`user_${uid}`);
-  if (storedData) {
-    return JSON.parse(storedData);
-  }
-  return null;
-};
-
-// Mock function to save user data
-const saveMockUserData = (userData: UserData) => {
-  localStorage.setItem(`user_${userData.uid}`, JSON.stringify(userData));
-};
 
 const App: React.FC = () => {
   const [user, setUser] = useState<any | null>(null);
@@ -40,12 +24,20 @@ const App: React.FC = () => {
   }, [theme]);
   
   useEffect(() => {
-    const unsubscribe = onAuthChange((firebaseUser) => {
+    const unsubscribe = onAuthChange(async (firebaseUser) => {
         if (firebaseUser) {
-            const existingUserData = getMockUserData(firebaseUser.uid);
             setUser(firebaseUser);
-            if(existingUserData) {
-                setUserData(existingUserData);
+            // Fetch real data from Firestore
+            try {
+                const existingUserData = await getUserData(firebaseUser.uid);
+                if (existingUserData) {
+                    setUserData(existingUserData);
+                } else {
+                    // User exists in Auth but no data in Firestore (interrupted signup)
+                    setUserData(null);
+                }
+            } catch (error) {
+                console.error("Failed to fetch user profile", error);
             }
         } else {
             setUser(null);
@@ -57,7 +49,7 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const handleProfileCreated = (profileData: {
+  const handleProfileCreated = async (profileData: {
     status: RelationshipStatus;
     singleProfile: SingleProfile | null;
     coupleProfile: CoupleProfile | null;
@@ -74,25 +66,33 @@ const App: React.FC = () => {
         lastChallengeDate: null,
         dailyChallenges: [],
       };
-      saveMockUserData(newUserData);
+      
+      // Save to Firestore
+      await saveUserData(newUserData);
       setUserData(newUserData);
     }
   };
   
   const handleLogout = async () => {
-    if(user) localStorage.removeItem(`user_${user.uid}`);
     await logout();
     setUser(null);
     setUserData(null);
   };
 
-  const handleUpdateUserData = (updatedData: UserData) => {
+  const handleUpdateUserData = async (updatedData: UserData) => {
     setUserData(updatedData);
-    saveMockUserData(updatedData);
+    // Save updates to Firestore
+    await saveUserData(updatedData);
+  };
+  
+  const handleDeleteAccount = async () => {
+      // In a real app, you would delete Firestore data here or via Cloud Functions trigger
+      // Then delete Auth
+      await logout();
   };
   
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900"><p className="text-lg">Loading LoveGrow...</p></div>;
+    return <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900"><p className="text-lg text-gray-600 dark:text-gray-300">Loading LoveGrow...</p></div>;
   }
 
   if (!user) {
@@ -107,7 +107,7 @@ const App: React.FC = () => {
             userData={userData} 
             onLogout={handleLogout} 
             onUpdateUserData={handleUpdateUserData}
-            onDeleteAccount={handleLogout}
+            onDeleteAccount={handleDeleteAccount}
             theme={theme}
             onToggleTheme={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
          />;

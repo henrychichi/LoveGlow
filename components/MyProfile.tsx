@@ -4,6 +4,7 @@ import Tracker from './Tracker';
 import Camera from './Camera';
 import { UserIcon, EditIcon, CameraIcon, UploadIcon, ArrowUturnLeftIcon, ExclamationTriangleIcon, QuestionMarkCircleIcon, HeartIcon, ArrowLeftOnRectangleIcon, SunIcon, MoonIcon } from './icons';
 import DeleteAccountModal from './DeleteAccountModal';
+import { uploadFile } from '../services/firebaseService';
 
 type Theme = 'light' | 'dark';
 
@@ -44,6 +45,7 @@ const MyProfile: React.FC<MyProfileProps> = ({
   const [isProfileCameraOpen, setIsProfileCameraOpen] = useState(false);
   const [isBgCameraOpen, setIsBgCameraOpen] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   
   const isCouple = status === RelationshipStatus.DATING || status === RelationshipStatus.MARRIED;
 
@@ -73,10 +75,6 @@ const MyProfile: React.FC<MyProfileProps> = ({
     }
   };
   
-  // Fix: Correctly handle updating a tuple state in an immutable way.
-  // The original implementation was not type-safe because spreading a tuple
-  // can result in a generic array, and indexing with a 'number' can cause issues.
-  // This creates a new tuple directly, which is safer and clearer.
   const handleCoupleNameChange = (index: 0 | 1) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (editedCoupleProfile) {
         const currentNames = editedCoupleProfile.names;
@@ -87,28 +85,54 @@ const MyProfile: React.FC<MyProfileProps> = ({
     }
   };
 
-  const handleProfileImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const uploadProfileImage = async (dataUrl: string) => {
+      setIsUploading(true);
+      try {
+          // Path: profiles/{uid}_timestamp.jpg
+          // Since we don't have direct access to UID here easily without passing it down, 
+          // we use a timestamp to ensure some uniqueness or just overwrite.
+          // Ideally, use the user's UID. For now, we'll assume the component updating the profile handles the data structure.
+          const filename = `profiles/${Date.now()}.jpg`;
+          const downloadUrl = await uploadFile(dataUrl, filename);
+          return downloadUrl;
+      } catch (e) {
+          console.error("Upload failed", e);
+          alert("Failed to upload image.");
+          return null;
+      } finally {
+          setIsUploading(false);
+      }
+  }
+
+  const handleProfileImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         const imageUrl = reader.result as string;
-        if (isCouple && editedCoupleProfile) {
-            setEditedCoupleProfile({ ...editedCoupleProfile, imageUrl });
-        } else if (!isCouple && editedSingleProfile) {
-            setEditedSingleProfile({ ...editedSingleProfile, imageUrl });
+        const hostedUrl = await uploadProfileImage(imageUrl);
+        
+        if (hostedUrl) {
+            if (isCouple && editedCoupleProfile) {
+                setEditedCoupleProfile({ ...editedCoupleProfile, imageUrl: hostedUrl });
+            } else if (!isCouple && editedSingleProfile) {
+                setEditedSingleProfile({ ...editedSingleProfile, imageUrl: hostedUrl });
+            }
         }
       };
       reader.readAsDataURL(e.target.files[0]);
     }
   };
 
-  const handleProfilePhotoCapture = (imageDataUrl: string) => {
-    if (isCouple && editedCoupleProfile) {
-        setEditedCoupleProfile({ ...editedCoupleProfile, imageUrl: imageDataUrl });
-    } else if (!isCouple && editedSingleProfile) {
-        setEditedSingleProfile({ ...editedSingleProfile, imageUrl: imageDataUrl });
-    }
+  const handleProfilePhotoCapture = async (imageDataUrl: string) => {
     setIsProfileCameraOpen(false);
+    const hostedUrl = await uploadProfileImage(imageDataUrl);
+    if (hostedUrl) {
+        if (isCouple && editedCoupleProfile) {
+            setEditedCoupleProfile({ ...editedCoupleProfile, imageUrl: hostedUrl });
+        } else if (!isCouple && editedSingleProfile) {
+            setEditedSingleProfile({ ...editedSingleProfile, imageUrl: hostedUrl });
+        }
+    }
   };
 
   const handleBackgroundImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -126,11 +150,13 @@ const MyProfile: React.FC<MyProfileProps> = ({
     setIsBgCameraOpen(false);
   };
 
-  const handleSaveChanges = () => {
+  const handleSaveChanges = async () => {
+    // Determine which profile to save and await the update function (which calls Firebase)
     if (isCouple && editedCoupleProfile) {
-        updateCoupleProfile(editedCoupleProfile);
+        // We need to await this if updateCoupleProfile is async (it is now in App.tsx)
+        await updateCoupleProfile(editedCoupleProfile);
     } else if (!isCouple && editedSingleProfile) {
-        updateSingleProfile(editedSingleProfile);
+        await updateSingleProfile(editedSingleProfile);
     }
     setIsEditing(false);
   };
@@ -244,12 +270,13 @@ const MyProfile: React.FC<MyProfileProps> = ({
                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Shared Picture</label>
                             <div className="flex flex-col items-center gap-4">
                                 <CoupleAvatar profile={editedCoupleProfile} />
+                                {isUploading && <p className="text-pink-500 text-sm animate-pulse">Uploading image...</p>}
                                 <div className="flex gap-4">
                                     <label htmlFor="imageUpload" className="cursor-pointer bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2">
                                         <UploadIcon className="w-5 h-5"/> Upload
                                     </label>
-                                    <input id="imageUpload" type="file" accept="image/*" onChange={handleProfileImageChange} className="hidden"/>
-                                    <button onClick={() => setIsProfileCameraOpen(true)} className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2">
+                                    <input id="imageUpload" type="file" accept="image/*" onChange={handleProfileImageChange} className="hidden" disabled={isUploading}/>
+                                    <button onClick={() => setIsProfileCameraOpen(true)} className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2" disabled={isUploading}>
                                         <CameraIcon className="w-5 h-5"/> Camera
                                     </button>
                                 </div>
@@ -270,8 +297,8 @@ const MyProfile: React.FC<MyProfileProps> = ({
                             <textarea name="sharedBio" id="sharedBio" rows={4} value={editedCoupleProfile.sharedBio} onChange={handleCoupleInputChange} className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500"/>
                         </div>
                         <div className="flex justify-end gap-4 pt-4">
-                            <button onClick={handleCancelEdit} className="bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">Cancel</button>
-                            <button onClick={handleSaveChanges} className="bg-pink-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-pink-600 transition">Save Changes</button>
+                            <button onClick={handleCancelEdit} disabled={isUploading} className="bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">Cancel</button>
+                            <button onClick={handleSaveChanges} disabled={isUploading} className="bg-pink-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-pink-600 transition">Save Changes</button>
                         </div>
                     </div>
                 ) : (
@@ -297,12 +324,13 @@ const MyProfile: React.FC<MyProfileProps> = ({
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Profile Picture</label>
                       <div className="flex flex-col items-center gap-4">
                           <img src={editedSingleProfile.imageUrl} alt="Profile Preview" className="w-32 h-32 rounded-full object-cover shadow-md"/>
+                          {isUploading && <p className="text-pink-500 text-sm animate-pulse">Uploading image...</p>}
                           <div className="flex gap-4">
                               <label htmlFor="imageUpload" className="cursor-pointer bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2">
                                   <UploadIcon className="w-5 h-5"/> Upload
                               </label>
-                              <input id="imageUpload" type="file" accept="image/*" onChange={handleProfileImageChange} className="hidden"/>
-                              <button onClick={() => setIsProfileCameraOpen(true)} className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2">
+                              <input id="imageUpload" type="file" accept="image/*" onChange={handleProfileImageChange} className="hidden" disabled={isUploading}/>
+                              <button onClick={() => setIsProfileCameraOpen(true)} className="bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-4 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition flex items-center gap-2" disabled={isUploading}>
                                   <CameraIcon className="w-5 h-5"/> Camera
                               </button>
                           </div>
@@ -321,8 +349,8 @@ const MyProfile: React.FC<MyProfileProps> = ({
                     <input type="text" name="interests" id="interests" value={editedSingleProfile.interests.join(', ')} onChange={handleSingleInterestsChange} className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 rounded-md shadow-sm focus:ring-pink-500 focus:border-pink-500"/>
                   </div>
                   <div className="flex justify-end gap-4 pt-4">
-                    <button onClick={handleCancelEdit} className="bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">Cancel</button>
-                    <button onClick={handleSaveChanges} className="bg-pink-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-pink-600 transition">Save Changes</button>
+                    <button onClick={handleCancelEdit} disabled={isUploading} className="bg-gray-300 dark:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold py-2 px-4 rounded-lg hover:bg-gray-400 dark:hover:bg-gray-500 transition">Cancel</button>
+                    <button onClick={handleSaveChanges} disabled={isUploading} className="bg-pink-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-pink-600 transition">Save Changes</button>
                   </div>
                 </div>
               ) : (

@@ -1,30 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LoveWallPost as LoveWallPostType, RelationshipStatus } from '../types';
 import LoveWallPost from './LoveWallPost';
 import Camera from './Camera';
 import { CameraIcon, UploadIcon, TrashIcon } from './icons';
-
-// Mock data to simulate community posts
-const initialPosts: LoveWallPostType[] = [
-  { id: 1, author: 'Jess & Tom', message: 'We did the "stargazing" challenge and it was magical! ✨', mediaUrl: 'https://picsum.photos/500/300', mediaType: 'image', likes: 125, comments: [{id: 1, author: 'Chloe', text: 'So romantic!'}] },
-  { id: 2, author: 'Maria', message: 'The self-love affirmation really changed my morning routine. Feeling grateful!', mediaUrl: 'https://picsum.photos/500/600', mediaType: 'image', likes: 88, comments: [] },
-  { id: 7, author: 'Mike & Anna', message: 'The cooking challenge was a blast! Messy but fun.', mediaUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', mediaType: 'video', likes: 301, comments: [{id: 2, author: 'Sam', text: 'Haha we did this too! Total chaos.'}, {id: 3, author: 'Ben', text: 'Looks delicious though!'}] },
-  { id: 3, author: 'David & Chloe', message: 'Cooked a meal together for the first time in ages. So much fun!', mediaUrl: 'https://picsum.photos/500/400', mediaType: 'image', likes: 210, comments: [] },
-  { id: 4, author: 'Alex', message: 'The "write a letter to your future self" task was so insightful.', mediaUrl: 'https://picsum.photos/500/500', mediaType: 'image', likes: 45, comments: [{id: 4, author: 'Priya', text: 'I need to try this one.'}] },
-  { id: 5, author: 'Sam & Ben', message: 'Our couples scrapbook is coming along so nicely!', mediaUrl: 'https://picsum.photos/500/700', mediaType: 'image', likes: 153, comments: [] },
-  { id: 6, author: 'Priya', message: 'Learning to love my own company.', mediaUrl: 'https://picsum.photos/500/350', mediaType: 'image', likes: 92, comments: [{id: 5, author: 'Maria', text: 'You go girl! ❤️'}] },
-];
+import { addLoveWallPost, subscribeToLoveWall, uploadFile } from '../services/firebaseService';
 
 interface LoveWallProps {
   status: RelationshipStatus;
 }
 
 const LoveWall: React.FC<LoveWallProps> = ({ status }) => {
-    const [posts, setPosts] = useState<LoveWallPostType[]>(initialPosts);
+    const [posts, setPosts] = useState<LoveWallPostType[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [mediaPreviewUrl, setMediaPreviewUrl] = useState<string | null>(null);
     const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
     const [isCameraOpen, setIsCameraOpen] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+
+    // Subscribe to Firestore updates
+    useEffect(() => {
+        const unsubscribe = subscribeToLoveWall((fetchedPosts) => {
+            setPosts(fetchedPosts);
+        });
+        return () => unsubscribe();
+    }, []);
 
     const handleMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -55,24 +54,39 @@ const LoveWall: React.FC<LoveWallProps> = ({ status }) => {
         if(fileInput) fileInput.value = '';
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newMessage || !mediaPreviewUrl || !mediaType) {
             alert('Please add a message and an image or video.');
             return;
         }
-        const newPost: LoveWallPostType = {
-            id: Date.now(),
-            author: 'You',
-            message: newMessage,
-            mediaUrl: mediaPreviewUrl,
-            mediaType: mediaType,
-            likes: 0,
-            comments: [],
-        };
-        setPosts([newPost, ...posts]);
-        setNewMessage('');
-        clearMedia();
+
+        setIsUploading(true);
+        try {
+            // Upload media to Firebase Storage
+            // Generate a unique path: lovewall/{timestamp}_{random}.jpg
+            const timestamp = Date.now();
+            const fileName = `lovewall/${timestamp}_${Math.floor(Math.random() * 1000)}.${mediaType === 'image' ? 'jpg' : 'mp4'}`;
+            
+            const downloadUrl = await uploadFile(mediaPreviewUrl, fileName);
+
+            // Save post to Firestore
+            await addLoveWallPost({
+                author: 'Anonymous', // In a real app, use user.displayName
+                message: newMessage,
+                mediaUrl: downloadUrl,
+                mediaType: mediaType,
+                comments: [],
+            });
+
+            setNewMessage('');
+            clearMedia();
+        } catch (error) {
+            console.error("Error posting to Love Wall:", error);
+            alert("Failed to post. Please try again.");
+        } finally {
+            setIsUploading(false);
+        }
     };
 
     return (
@@ -143,8 +157,19 @@ const LoveWall: React.FC<LoveWallProps> = ({ status }) => {
                             />
                         </div>
                         
-                        <button type="submit" className="w-full bg-purple-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-300 disabled:bg-gray-400 dark:disabled:bg-gray-600" disabled={!newMessage || !mediaPreviewUrl}>
-                            Post to the Wall
+                        <button 
+                            type="submit" 
+                            className="w-full bg-purple-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-purple-700 transition-colors duration-300 disabled:bg-gray-400 dark:disabled:bg-gray-600 flex justify-center items-center" 
+                            disabled={!newMessage || !mediaPreviewUrl || isUploading}
+                        >
+                            {isUploading ? (
+                                <>
+                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                                    Posting...
+                                </>
+                            ) : (
+                                'Post to the Wall'
+                            )}
                         </button>
                     </form>
                 </div>
@@ -153,6 +178,9 @@ const LoveWall: React.FC<LoveWallProps> = ({ status }) => {
                     {posts.map((post) => (
                         <LoveWallPost key={post.id} post={post} />
                     ))}
+                    {posts.length === 0 && (
+                        <p className="text-center col-span-full text-gray-500">No posts yet. Be the first to share!</p>
+                    )}
                 </div>
             </div>
         </>

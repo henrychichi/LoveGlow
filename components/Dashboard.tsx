@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { UserData, Challenge, RelationshipStatus, SingleProfile } from '../types';
 import { getDailyChallenges } from '../services/geminiService';
+import { saveUserData } from '../services/firebaseService';
 import DailyActivity from './DailyActivity';
 import Tracker from './Tracker';
 import LoveWall from './LoveWall';
@@ -42,7 +43,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userData, onLogout, onUpdateUserD
       try {
         const newChallenges = await getDailyChallenges(userData.relationshipStatus);
         setChallenges(newChallenges);
-        onUpdateUserData({ ...userData, dailyChallenges: newChallenges, lastChallengeDate: today });
+        
+        // Save new challenges to Firestore immediately so they persist
+        const updatedData = { ...userData, dailyChallenges: newChallenges, lastChallengeDate: today };
+        onUpdateUserData(updatedData); // Updates local state in App.tsx
+        // App.tsx handles the actual saveUserData call via the callback, but explicit save is safer for async flows
+        await saveUserData(updatedData);
+
       } catch (err: any) {
         setError(err.message || 'Failed to load challenges.');
       } finally {
@@ -55,7 +62,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userData, onLogout, onUpdateUserD
     fetchChallenges();
   }, [fetchChallenges]);
 
-  const handleCompleteChallenge = (index: number) => {
+  const handleCompleteChallenge = async (index: number) => {
     const newChallenges = [...challenges];
     if (newChallenges[index].completed) return;
 
@@ -101,7 +108,18 @@ const Dashboard: React.FC<DashboardProps> = ({ userData, onLogout, onUpdateUserD
       challengesCompleted: userData.stats.challengesCompleted + 1 
     };
     
-    onUpdateUserData({ ...userData, dailyChallenges: newChallenges, stats: newStats });
+    const updatedData = { ...userData, dailyChallenges: newChallenges, stats: newStats };
+    
+    // Optimistic update
+    onUpdateUserData(updatedData);
+    
+    // Persist to Firestore
+    try {
+        await saveUserData(updatedData);
+    } catch (e) {
+        console.error("Failed to save progress", e);
+        // In a robust app, we might rollback state here
+    }
   };
   
   const handleConnect = (profile: SingleProfile) => {
